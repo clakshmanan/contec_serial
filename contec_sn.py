@@ -9,11 +9,12 @@ import time
 import random
 import string
 from sqlalchemy import create_engine, Column, String, Integer, Float, Date, DateTime, Boolean
-#from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import declarative_base
+#from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 import uuid
 import plotly.express as px
+
 
 # Database setup
 Base = declarative_base()
@@ -22,7 +23,7 @@ class Device(Base):
     __tablename__ = 'devices'
     id = Column(Integer, primary_key=True)
     report_date = Column(Date)
-    serial_number = Column(String(50), unique=True, nullable=False)
+    serial_number = Column(String(50), unique=False, nullable=False)
     model = Column(String(50))
     box_type = Column(String(50))
     customer_name = Column(String(100))
@@ -50,7 +51,7 @@ class Test(Base):
     batch_number = Column(String(100))
     
 # Initialize database
-engine = create_engine('sqlite:///contec_test.db', future=True)
+engine = create_engine('sqlite:///contec_units.db')
 Base.metadata.create_all(engine)
 Session = sessionmaker(bind=engine)
 session = Session()
@@ -74,14 +75,18 @@ def calculate_storage_days_category(report_date):
 
 # Streamlit app
 def main():
+    # Page configuration
     st.set_page_config(
     page_title="Contec",
-    page_icon="©",
+    page_icon="🌀",
     layout='wide',
     initial_sidebar_state="auto"
-)
-    st.markdown("""<style>footer {visibility: hidden;}</style>""", unsafe_allow_html=True)
-    #st.set_page_config(page_title="Contec Device Tracking", layout="wide", page_icon="🔧")
+    )
+    st.markdown(
+    """<style>
+        MainMenu{visibility:hidden;}
+        footer {visibility: hidden;}
+       </style>""", unsafe_allow_html=True)
     
     # Custom CSS
     st.markdown("""
@@ -96,10 +101,9 @@ def main():
     </style>
     """, unsafe_allow_html=True)
     st.markdown(
-            '<p style="font-family:sans-serif;text-align:center; color:#0320fc; font-size: 30px;">✨ CONTEC DEVICE TESTING ✨</p>',
+            '<p style="font-family:sans-serif;text-align:center; color:#3035cf; font-size: 30px;">🧿 CONTEC DEVICE SERIAL HISTORY 🧿</p>',
             unsafe_allow_html=True
         )
-    # st.title(" Contec Device-Test-Cycle Data")
     st.markdown("---")
     
     # Sidebar navigation
@@ -122,53 +126,107 @@ def main():
                 location = st.selectbox("Location", ["Select","Charlotte", "Sanjose", "Brownsville", "Other"])
                 in_house = st.checkbox("In-House (Warehouse Storage)", value=True)
             
+            
             if st.button("Register Device"):
                 if not serial_number or not model or not customer_name:
                     st.error("Please fill all required fields (marked with *)")
                 else:
-                    # Check if serial number already exists
-                    existing_device = session.query(Device).filter_by(serial_number=serial_number).first()
-                    if existing_device:
-                        st.error(f"Device with serial number {serial_number} already exists!")
-                    else:
-                        # Create new device
-                        new_device = Device(
-                            report_date=report_date,
+                    try:
+                        # Check if a device with same serial number AND report_date already exists
+                        existing_device = session.query(Device).filter_by(
                             serial_number=serial_number,
-                            model=model,
-                            box_type=box_type,
-                            customer_name=customer_name,
-                            location=location,
-                            in_house=in_house,
-                            storage_days_category=calculate_storage_days_category(report_date)
+                            report_date=report_date
+                        ).first()
+
+                        if existing_device:
+                            st.error(f"⚠️ Device with Serial Number '{serial_number}' is already registered on {report_date}. Please use a different date.")
+                        else:
+                            new_device = Device(
+                                report_date=report_date,
+                                serial_number=serial_number,
+                                model=model,
+                                box_type=box_type,
+                                customer_name=customer_name,
+                                location=location,
+                                in_house=in_house,
+                                storage_days_category=calculate_storage_days_category(report_date)
+                            )
+                        session.add(new_device)
+                        session.commit()
+                        st.success(f"✅ Device '{serial_number}' registered successfully for {report_date}!")
+                    except Exception as e:
+                        st.error(f"❌ Error: {str(e)}")
+
+                    if not serial_number or not model or not customer_name:
+                        st.error("Please fill all required fields (marked with *)")
+                    else:
+                        # Check if this device is already registered with the same serial number AND same report_date
+                        existing_device = session.query(Device).filter_by(
+                        serial_number=serial_number,
+                        report_date=report_date
+                        ).first()
+
+                    if existing_device:
+                        st.error(f"Device with Serial Number '{serial_number}' is already registered on {report_date}.")
+                    else:
+                        # Create and register new device
+                        new_device = Device(
+                        report_date=report_date,
+                        serial_number=serial_number,
+                        model=model,
+                        box_type=box_type,
+                        customer_name=customer_name,
+                        location=location,
+                        in_house=in_house,
+                        storage_days_category=calculate_storage_days_category(report_date)
                         )
                         session.add(new_device)
                         session.commit()
-                        st.success(f"Device {serial_number} registered successfully!")
+                        st.success(f"Device '{serial_number}' registered successfully for {report_date}!")
+
         
-        st.subheader("Registered Devices")
+       
+        st.subheader("🔍 Registered Devices")
+        # Get all devices from DB
         devices = session.query(Device).all()
+
         if devices:
-            devices_data = [{
-                "Report Date": device.report_date.strftime('%Y-%m-%d') if device.report_date else "",
-                "Serial Number": device.serial_number,
-                "Model": device.model,
-                "Device Type": device.box_type,
-                "Customer": device.customer_name,
-                "Location": device.location,
-                "In-House": "Yes" if device.in_house else "No",
-                "Batch Number": device.batch_number if device.batch_number else "Not assigned",
-                "Status": "Scrap" if device.is_scrap else "Active"
-            } for device in devices]
-            
-            df_devices = pd.DataFrame(devices_data)
-            
+            # Convert to DataFrame
+            df_devices = pd.DataFrame([{
+                "Report Date": d.report_date.strftime('%Y-%m-%d') if d.report_date else "",
+                "Serial Number": d.serial_number,
+                "Model": d.model,
+                "Device Type": d.box_type,
+                "Customer": d.customer_name,
+                "Location": d.location,
+                "In-House": "Yes" if d.in_house else "No",
+                "Batch Number": d.batch_number if d.batch_number else "Not assigned",
+                "Status": "Scrap" if d.is_scrap else "Active"
+            } for d in devices])
+
+            # Filters
+            with st.expander("🔎 Filter Options"):
+                search_sn = st.text_input("Search by Serial Number")
+                search_model = st.text_input("Search by Model")
+                search_customer = st.text_input("Search by Customer Name")
+                filter_type = st.selectbox("Filter by Device Type", options=["All"] + sorted(df_devices["Device Type"].unique().tolist()))
+                
+                if search_sn:
+                    df_devices = df_devices[df_devices["Serial Number"].str.contains(search_sn, case=False, na=False)]
+                if search_model:
+                    df_devices = df_devices[df_devices["Model"].str.contains(search_model, case=False, na=False)]
+                if search_customer:
+                    df_devices = df_devices[df_devices["Customer"].str.contains(search_customer, case=False, na=False)]
+                if filter_type != "All":
+                    df_devices = df_devices[df_devices["Device Type"] == filter_type]
+
+            # AG Grid
             gb = GridOptionsBuilder.from_dataframe(df_devices)
             gb.configure_pagination(paginationAutoPageSize=False, paginationPageSize=10)
-            gb.configure_selection('single', use_checkbox=True)
-            gb.configure_default_column(groupable=True, value=True, enableRowGroup=True, aggFunc='sum', editable=False)
+            gb.configure_side_bar()
+            gb.configure_default_column(groupable=True, value=True, enableRowGroup=True, editable=False, filter=True, sortable=True)
             grid_options = gb.build()
-            
+
             grid_response = AgGrid(
                 df_devices,
                 gridOptions=grid_options,
@@ -179,8 +237,10 @@ def main():
                 fit_columns_on_grid_load=True,
                 theme='streamlit'
             )
+
         else:
             st.info("No devices registered yet.")
+
     
     # Testing Management
     elif choice == "Testing Management":
